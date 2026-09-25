@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ChatMessage, ModelClient } from "./proxy-client.js";
 import type { Session, SessionStore } from "./session-store.js";
 
-const SYSTEM_PROMPT = "You are an implementation adviser. You cannot inspect or edit the user's repository or run commands. Use only the context provided. For code changes, propose concrete changes or a unified diff with file paths. State assumptions and never claim tests were run. Cursor owns repository edits, verification, and git.";
+const SYSTEM_PROMPT = "You are an implementation adviser. You cannot inspect or edit the user's repository or run commands. Use only the context provided. For code changes, propose concrete changes or a unified diff with file paths. State assumptions and never claim tests were run. The calling MCP client owns repository inspection, edits, verification, and git.";
 
 export class SessionError extends Error {}
 
@@ -87,7 +87,7 @@ export class SessionService {
     try {
       await this.store.put(session);
       const messages: ChatMessage[] = [
-        { role: "system", content: `${SYSTEM_PROMPT}${session.context ? `\n\nRepository context supplied by Cursor:\n${session.context}` : ""}` },
+        { role: "system", content: `${SYSTEM_PROMPT}${session.context ? `\n\nRepository context supplied by the calling MCP client:\n${session.context}` : ""}` },
         ...session.messages,
         { role: "user", content: input },
       ];

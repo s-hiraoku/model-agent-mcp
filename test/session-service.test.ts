@@ -19,13 +19,18 @@ test("preserves history and switches models between turns", async () => {
   const first = await service.start("Implement X", "src/a.ts exists");
   assert.equal(first.status, "ready");
   assert.equal(first.response, "reply-1");
-  assert.match(calls[0]!.messages[0]!.content, /src\/a\.ts exists/);
+  const initialMessage = calls[0]?.messages[0];
+  assert(initialMessage);
+  assert.match(initialMessage.content, /src\/a\.ts exists/);
+  assert.match(initialMessage.content, /calling MCP client owns repository inspection/);
 
   await service.setModel(first.session_id, "gpt-test");
   const second = await service.continue(first.session_id, "Revise X");
   assert.equal(second.model, "gpt-test");
   assert.equal(second.response, "reply-2");
-  assert.deepEqual(calls[1]!.messages.slice(1).map((item) => [item.role, item.content]), [
+  const continuation = calls[1];
+  assert(continuation);
+  assert.deepEqual(continuation.messages.slice(1).map((item) => [item.role, item.content]), [
     ["user", "Implement X"], ["assistant", "reply-1"], ["user", "Revise X"],
   ]);
   const metadata = await service.get(first.session_id) as { turn_count: number; model: string };

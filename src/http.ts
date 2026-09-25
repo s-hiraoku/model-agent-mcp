@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import express from "express";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { toNodeHandler } from "@modelcontextprotocol/node";
+import { createMcpHandler } from "@modelcontextprotocol/server";
 import type { Config } from "./config.js";
 import { createMcpServer } from "./mcp.js";
 import type { SessionService } from "./session-service.js";
@@ -14,6 +15,8 @@ function authorized(header: string | undefined, token: string): boolean {
 
 export function createApp(config: Config, sessions: SessionService) {
   const app = express();
+  const handler = createMcpHandler(() => createMcpServer(sessions));
+  const nodeHandler = toNodeHandler(handler);
   app.get("/healthz", (_req, res) => { res.json({ status: "ok" }); });
   app.use("/mcp", (req, res, next) => {
     if (!authorized(req.headers.authorization, config.mcpBearerToken)) {
@@ -25,15 +28,8 @@ export function createApp(config: Config, sessions: SessionService) {
   });
   app.use("/mcp", express.json({ limit: "1mb" }));
   app.all("/mcp", async (req, res) => {
-    const server = createMcpServer(sessions);
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
-      enableJsonResponse: true,
-    });
-    res.once("close", () => { void server.close(); });
     try {
-      await server.connect(transport);
-      await transport.handleRequest(req, res, req.body);
+      await nodeHandler(req, res, req.body);
     } catch {
       if (!res.headersSent) res.status(500).json({ error: "MCP transport error" });
     }
