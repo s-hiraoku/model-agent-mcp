@@ -1,0 +1,20 @@
+services:
+  cli-proxy-api:
+    image: ${CLIPROXY_IMAGE:-eceasy/cli-proxy-api:latest}
+    volumes:
+      - ./cliproxy.config.yaml:/CLIProxyAPI/config.yaml:ro
+      - ./cliproxy-auth:/root/.cli-proxy-api
+    ports:
+      - "127.0.0.1:8317:8317"
+      - "127.0.0.1:1455:1455" # Codex OAuth callback during setup
+      - "127.0.0.1:54545:54545" # Claude OAuth callback during setup
+    restart: unless-stopped
+
+  model-agent-mcp:
+    build: .
+    env_file: .env
+    depends_on:
+      - cli-proxy-api
+    ports:
+      - "127.0.0.1:8765:8765" # publish through a TLS reverse proxy
+    restart: unless-stopped

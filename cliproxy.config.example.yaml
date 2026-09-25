@@ -1,0 +1,8 @@
+host: ""
+port: 8317
+auth-dir: /root/.cli-proxy-api
+api-keys:
+  - "replace-with-the-same-value-as-CLIPROXY_API_KEY-in-.env"
+remote-management:
+  allow-remote: false
+  secret-key: ""
