@@ -39,13 +39,14 @@ Docker Compose では MCP と CLIProxyAPI を別サービスとして起動し�
 | ツール | 用途 |
 | --- | --- |
 | `agent_list_models` | CLIProxyAPI のモデル ID を一覧表示 |
+| `agent_set_default_model` | 新規相談で使う既定モデルを変更 |
 | `agent_start_task` | モデルと context を指定して相談を開始 |
 | `agent_continue_task` | 同じ会話を続行 |
 | `agent_set_session_model` | 次の応答からモデルを変更 |
 | `agent_get_session` | 状態と履歴の短いプレビューを確認 |
 | `agent_cancel_task` | 実行中の処理を中断し、セッションを終了 |
 
-セッションは現在メモリ保存で、再起動すると消えます。モデルに渡すのは呼び出し元が提供した文脈と会話履歴です。詳しい入出力は [ツールと実装ワークフロー](docs/tool-workflow.md) にあります。
+セッションは現在メモリ保存で、再起動すると消えます。既定モデルは `.env` の `DEFAULT_MODEL` で起動時に設定し、`agent_set_default_model` で稼働中に変更できます。稼働中の変更は全クライアントに共通で、再起動すると `.env` の値に戻ります。モデルに渡すのは呼び出し元が提供した文脈と会話履歴です。詳しい入出力は [ツールと実装ワークフロー](docs/tool-workflow.md) にあります。
 
 ## 開発時の確認
 

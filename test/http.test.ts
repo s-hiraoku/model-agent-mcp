@@ -31,6 +31,7 @@ test("MCP rejects unauthenticated calls and exposes model tools", async () => {
     await client.connect(transport);
     const tools = await client.listTools();
     assert(tools.tools.some((tool) => tool.name === "agent_set_session_model"));
+    assert(tools.tools.some((tool) => tool.name === "agent_set_default_model"));
     const started = await client.callTool({ name: "agent_start_task", arguments: { task: "implement", model: "gpt-test" } });
     assert.equal(started.isError, undefined);
     assert(Array.isArray(started.content));
@@ -39,6 +40,16 @@ test("MCP rejects unauthenticated calls and exposes model tools", async () => {
     const listed = await client.callTool({ name: "agent_list_models", arguments: {} });
     assert(Array.isArray(listed.content));
     assert.deepEqual(JSON.parse((listed.content[0] as { text: string }).text).models, ["claude-test", "gpt-test"]);
+    const changed = await client.callTool({ name: "agent_set_default_model", arguments: { model: "gpt-test" } });
+    assert.equal(changed.isError, undefined);
+    assert(Array.isArray(changed.content));
+    assert.deepEqual(JSON.parse((changed.content[0] as { text: string }).text), { default_model: "gpt-test" });
+    const defaulted = await client.callTool({ name: "agent_start_task", arguments: { task: "use default" } });
+    assert(Array.isArray(defaulted.content));
+    assert.equal(JSON.parse((defaulted.content[0] as { text: string }).text).model, "gpt-test");
+    const listedAgain = await client.callTool({ name: "agent_list_models", arguments: {} });
+    assert(Array.isArray(listedAgain.content));
+    assert.equal(JSON.parse((listedAgain.content[0] as { text: string }).text).default_model, "gpt-test");
   } finally {
     await client.close();
     server.close();

@@ -1,13 +1,14 @@
 # 検証状況と PoC の制約
 
-「コードに存在する」「ローカルで動いた」「実サービスへ到達した」を分けて記録します。日付は 2026-09-25 です。
+「コードに存在する」「ローカルで動いた」「実サービスへ到達した」を分けて記録します。最終更新日は 2026-09-26 です。
 
 | 対象 | 確認済みの根拠 | まだ言えないこと |
 | --- | --- | --- |
 | MCP transport と Bearer 認証 | SDK v2 の Streamable HTTP を[HTTP テスト](../test/http.test.ts)で接続・ツール呼び出し、認証なし 401 を確認。Node 起動時に `/healthz` 200 と `/mcp` 401 を確認 | 公開 HTTPS と Cursor からの接続 |
 | モデル API クライアント | [クライアントテスト](../test/proxy-client.test.ts)の fetch で `/v1/models`、`/v1/chat/completions`、Bearer ヘッダー、エラー処理を確認 | 実 CLIProxyAPI の OAuth と各モデルへの成功 |
 | 会話セッション | [セッションテスト](../test/session-service.test.ts)で履歴継続、モデル切替、キャンセル、失敗後の再試行を確認 | 再起動後の保持、複数インスタンス間の整合性 |
-| ビルドと設定 | Node.js 26.10.0 で `npm ci`、Biome lint、typecheck、6 テスト、TypeScript build を実行。`docker compose config --quiet` を確認。`node:26.10.0-alpine` の公開 manifest を確認 | Docker イメージの実ビルドとコンテナ起動。検証環境の Docker デーモンへ接続できなかった |
+| 既定モデルの変更 | セッションテストで新規依頼への適用、既存セッションと明示指定の維持を確認。HTTP テストで MCP ツール経由の設定と読み戻しを確認 | 実サービスでの複数クライアント同時利用と再起動後の確認 |
+| ビルドと設定 | Node.js 26.10.0 で `npm ci`、Biome lint、typecheck、TypeScript build を実行。`docker compose config --quiet` を確認。`node:26.10.0-alpine` の公開 manifest を確認 | Docker イメージの実ビルドとコンテナ起動。検証環境の Docker デーモンへ接続できなかった |
 | Cursor Local / Cloud | 公式 MCP 設定仕様を確認し、設定例を記載 | 実際の Cursor UI での tool discovery・呼び出し、両者が同じ URL を使った動作 |
 
 ## 実サービスで必要な確認順
@@ -24,6 +25,7 @@
 ## 現行 PoC の制約
 
 - メモリ上のセッションはプロセス再起動で失われます。単一インスタンスを前提にしています。
+- 稼働中に変更した既定モデルも再起動で `DEFAULT_MODEL` に戻ります。全クライアントで一つの既定値を共有します。
 - 全クライアントが一つの MCP Bearer token を共有する構成です。利用者ごとのセッション所有権、レート制限、監査ログはありません。
 - 初回 `agent_start_task` は応答後に `session_id` が分かるため、初回実行中の外部キャンセルはできません。
 - `agent_get_session` は履歴の先頭 200 文字ずつしか返しません。応答全文の再取得や検索はできません。

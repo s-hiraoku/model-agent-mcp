@@ -33,12 +33,14 @@ npm start
 | `MCP_BEARER_TOKEN` | MCP クライアントからのアクセスに使う長いランダムな token |
 | `CLIPROXY_BASE_URL` | CLIProxyAPI の HTTP origin |
 | `CLIPROXY_API_KEY` | CLIProxyAPI の `api-keys` と一致する key |
-| `DEFAULT_MODEL` | `agent_start_task` で model を省略したときの ID |
+| `DEFAULT_MODEL` | 起動時の既定モデル ID。`agent_start_task` で model を省略したときに使う |
 | `MODEL_MAX_TOKENS` | 1 回のモデル応答の上限。サンプルは 4096 |
 | `CLIPROXY_TIMEOUT_MS` | 上流呼び出しのタイムアウト。サンプルは 120000 |
 | `HOST` / `PORT` | MCP の bind 先。サンプルは `0.0.0.0:8765` |
 
 `MCP_BEARER_TOKEN` と `CLIPROXY_API_KEY` は別の値にしてください。`.env` と OAuth credential は Git に含めません。
+
+起動後に既定モデルを変える場合は `agent_set_default_model` を使います。新規セッションにだけ適用され、既存セッションは元のモデルを維持します。この設定はメモリ上にあり、再起動すると `DEFAULT_MODEL` に戻ります。全クライアントが一つの既定モデルを共有し、Bearer token を持つ利用者は誰でも変更できるため、トークンの共有先を制限してください。
 
 ## 2B. Docker Compose で二つのサービスを起動
 
@@ -110,7 +112,19 @@ curl -sS http://127.0.0.1:8765/mcp \
   --data '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"agent_list_models","arguments":{}}}'
 ```
 
-実モデルへの最小呼び出しは次のとおりです。`DEFAULT_MODEL` に有効なモデルを設定し、OAuth とクォータを確認してから実行してください。これはモデル利用枠を消費します。
+稼働中の既定モデルを変更する例:
+
+```bash
+curl -sS http://127.0.0.1:8765/mcp \
+  -H "Authorization: Bearer $MCP_BEARER_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  --data '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"agent_set_default_model","arguments":{"model":"your-model-id"}}}'
+```
+
+`your-model-id` は `agent_list_models` で確認した ID に置き換えてください。設定時にモデル ID の有効性は検証せず、推論の成否は次の `agent_start_task` で分かります。
+
+実モデルへの最小呼び出しは次のとおりです。`agent_list_models` で現在の既定モデルを確認し、OAuth とクォータを確認してから実行してください。これはモデル利用枠を消費します。
 
 ```bash
 curl -sS http://127.0.0.1:8765/mcp \

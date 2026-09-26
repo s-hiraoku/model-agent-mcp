@@ -38,6 +38,25 @@ test("preserves history and switches models between turns", async () => {
   assert.equal(metadata.model, "gpt-test");
 });
 
+test("updates the default only for new sessions without changing existing sessions", async () => {
+  const usedModels: string[] = [];
+  const service = new SessionService(new MemorySessionStore(), {
+    listModels: async () => ["claude-test", "gpt-test"],
+    complete: async (model) => { usedModels.push(model); return "ok"; },
+  }, "claude-test");
+
+  const existing = await service.start("first");
+  assert.equal(existing.model, "claude-test");
+  assert.deepEqual(await service.setDefaultModel("gpt-test"), { default_model: "gpt-test" });
+  assert.equal((await service.listModels()).default_model, "gpt-test");
+  const next = await service.start("second");
+  assert.equal(next.model, "gpt-test");
+  const explicit = await service.start("third", undefined, "claude-test");
+  assert.equal(explicit.model, "claude-test");
+  assert.equal((await service.continue(existing.session_id, "follow up")).model, "claude-test");
+  assert.deepEqual(usedModels, ["claude-test", "gpt-test", "claude-test", "claude-test"]);
+});
+
 test("cancel aborts an in-flight continuation and closes the session", async () => {
   let started!: () => void;
   const entered = new Promise<void>((resolve) => { started = resolve; });

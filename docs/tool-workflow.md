@@ -7,18 +7,21 @@
 | ツール | 入力 | 主な返却値 |
 | --- | --- | --- |
 | `agent_list_models` | なし | `default_model`, `models` |
+| `agent_set_default_model` | `model` | `default_model` |
 | `agent_start_task` | `task`, `context?`, `model?` | `session_id`, `model`, `status`, `response?`, `error?` |
 | `agent_continue_task` | `session_id`, `message` | `session_id`, `model`, `status`, `response?`, `error?` |
 | `agent_set_session_model` | `session_id`, `model` | `session_id`, `model` |
 | `agent_get_session` | `session_id` | 状態、日時、ターン数、履歴の短いプレビュー |
 | `agent_cancel_task` | `session_id` | `session_id`, `status: "cancelled"` |
 
-`task`、`message`、`context` は空文字不可・最大 200,000 文字です。`model` は CLIProxyAPI が受け付けるモデル ID または alias を指定します。`agent_set_session_model` は ID の存在を事前確認せず、実際の成否は次のモデル呼び出しで分かります。
+`task`、`message`、`context` は空文字不可・最大 200,000 文字です。`model` は CLIProxyAPI が受け付けるモデル ID または alias を指定します。二つのモデル設定ツールは ID の存在を事前確認せず、実際の成否は次のモデル呼び出しで分かります。
+
+`agent_set_default_model` は `agent_start_task` で `model` を省略した新規セッションだけに適用します。既存セッションや明示的にモデルを指定した依頼には影響しません。稼働中の全 MCP クライアントで共有され、再起動すると `.env` の `DEFAULT_MODEL` に戻ります。現在値は `agent_list_models` の `default_model` で確認できます。
 
 ## Cursor での基本的な使い方
 
 1. Cursor が issue、対象ファイル、既存テスト、制約を調べます。
-2. 必要なら `agent_list_models` で候補 ID を見ます。
+2. 必要なら `agent_list_models` で候補 ID と既定モデルを見ます。共有の既定値を変える場合は `agent_set_default_model` を呼びます。
 3. 関連するコードと要件を `context` にまとめ、`agent_start_task` で実装案を求めます。
 4. 返った提案・diff の適用先と前提を Cursor が確認し、自分のチェックアウトを編集します。
 5. Cursor が diff、lint、テストを確認します。失敗内容や追加条件を `agent_continue_task` に送り、同じ会話を続けます。

@@ -33,7 +33,7 @@ flowchart LR
 ## 1 回の依頼
 
 1. クライアントが `agent_start_task({task, context?, model?})` を呼びます。
-2. MCP は UUID のアプリケーションセッションを作り、既定または指定モデルを選びます。
+2. MCP は UUID のアプリケーションセッションを作り、既定または指定モデルを選びます。既定値は起動時の `DEFAULT_MODEL` から始まり、`agent_set_default_model` で稼働中に変更できます。
 3. MCP は指示文、提供された context、ユーザーメッセージを CLIProxyAPI の `POST /v1/chat/completions` に送ります。
 4. テキスト応答を履歴に追加し、`session_id` と応答をクライアントへ返します。
 5. 後続の `agent_continue_task` は保存済みの会話を再送します。`agent_set_session_model` は次の呼び出しからモデル ID を変えます。
@@ -45,6 +45,8 @@ flowchart LR
 MCP transport は SDK v2 の `createMcpHandler` がリクエストごとに新しいサーバーを作るステートレスな Streamable HTTP です。SDK が対応する transport セッションと、ツールが返す `session_id` は別です。この PoC が保持するのは後者の **アプリケーション会話セッション**です。
 
 [`SessionStore`](../src/session-store.ts) は `get` / `put` のインターフェースを持ち、現在は `MemorySessionStore` を使います。状態は `running`、`ready`、`error`、`cancelled` です。再起動すると会話は消えます。Redis 等に差し替えるときは保存先だけでなく、同一セッションの排他とキャンセル通知も複数インスタンス間で共有する必要があります。
+
+稼働中に変更した既定モデルもプロセスのメモリ上に保持します。MCP を複数インスタンスに増やす場合、既定値の共有と変更権限を別途設計する必要があります。
 
 ## 認証とネットワーク
 

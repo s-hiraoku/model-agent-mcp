@@ -29,6 +29,11 @@ export function createMcpServer(sessions: SessionService): McpServer {
     inputSchema: z.object({}),
   }, () => call(() => sessions.listModels()));
 
+  server.registerTool("agent_set_default_model", {
+    description: "Set the shared default model for new tasks when model is omitted. Existing sessions keep their model. This setting resets to DEFAULT_MODEL on server restart.",
+    inputSchema: z.object({ model }),
+  }, ({ model }) => call(() => sessions.setDefaultModel(model)));
+
   server.registerTool("agent_start_task", {
     description: "Ask the selected model for implementation guidance or a patch. The calling MCP client supplies repository context and applies and verifies any proposed changes.",
     inputSchema: z.object({ task: text, context: text.optional(), model: model.optional() }),

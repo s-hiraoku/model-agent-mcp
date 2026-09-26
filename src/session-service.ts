@@ -12,11 +12,16 @@ export class SessionService {
   constructor(
     private readonly store: SessionStore,
     private readonly client: ModelClient,
-    private readonly defaultModel: string,
+    private defaultModel: string,
   ) {}
 
   async listModels(): Promise<{ default_model: string; models: string[] }> {
     return { default_model: this.defaultModel, models: await this.client.listModels() };
+  }
+
+  async setDefaultModel(model: string): Promise<{ default_model: string }> {
+    this.defaultModel = model;
+    return { default_model: model };
   }
 
   async start(task: string, context?: string, model?: string): Promise<{ session_id: string; model: string; status: string; response?: string; error?: string }> {
