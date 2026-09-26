@@ -8,6 +8,8 @@
 | モデル API クライアント | [クライアントテスト](../test/proxy-client.test.ts)の fetch で `/v1/models`、`/v1/chat/completions`、Bearer ヘッダー、エラー処理を確認 | 実 CLIProxyAPI の OAuth と各モデルへの成功 |
 | 会話セッション | [セッションテスト](../test/session-service.test.ts)で履歴継続、モデル切替、キャンセル、失敗後の再試行を確認 | 再起動後の保持、複数インスタンス間の整合性 |
 | 既定モデルの変更 | セッションテストで新規依頼への適用、既存セッションと明示指定の維持を確認。HTTP テストで MCP ツール経由の設定と読み戻しを確認 | 実サービスでの複数クライアント同時利用と再起動後の確認 |
+| モデルのフォールバック | クライアントテストで CLIProxyAPI エラー分類、セッションテストで `auto` への一回だけの再試行、失敗・認証エラー時の非再試行を確認 | 実 CLIProxyAPI の `auto` がどのモデルを選ぶか、OAuth 付き推論の成功 |
+| エージェントへの表示指示 | HTTP テストで MCP 初期化の `instructions` を確認。Cursor 用 [`AGENTS.md`](../examples/AGENTS.md) に表示文を記載 | Cursor Local / Cloud が実際に表示指示に従うこと |
 | ビルドと設定 | Node.js 26.10.0 で `npm ci`、Biome lint、typecheck、TypeScript build を実行。`docker compose config --quiet` を確認。`node:26.10.0-alpine` の公開 manifest を確認 | Docker イメージの実ビルドとコンテナ起動。検証環境の Docker デーモンへ接続できなかった |
 | Cursor Local / Cloud | 公式 MCP 設定仕様を確認し、設定例を記載 | 実際の Cursor UI での tool discovery・呼び出し、両者が同じ URL を使った動作 |
 
@@ -32,6 +34,7 @@
 - モデル呼び出しはテキストのみ・非ストリーミングです。モデルにファイル編集や shell のツールを渡しません。
 - 入力と履歴は呼び出し元から CLIProxyAPI と選択モデルへ送られます。秘密情報を `context` に含めない運用が必要です。
 - `agent_list_models` の結果は chat endpoint の対応表ではありません。モデル切替の時点でも ID を検証せず、次の推論で CLIProxyAPI の成否が分かります。
+- `auto` へのフォールバックはモデル利用先を変える可能性があります。選択された具体的なモデル ID を MCP は現在返しません。
 - CLIProxyAPI イメージは Compose の初期値が `latest` です。再現性が必要な配備では `CLIPROXY_IMAGE` を固定します。
 
 永続化や複数利用者への公開を進める場合、`SessionStore` の交換だけでは足りません。所有権チェック、共有排他、キャンセル伝達、保持期限とデータ削除をまとめて設計する必要があります。

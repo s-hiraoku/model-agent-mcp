@@ -8,8 +8,8 @@
 | --- | --- | --- |
 | `agent_list_models` | なし | `default_model`, `models` |
 | `agent_set_default_model` | `model` | `default_model` |
-| `agent_start_task` | `task`, `context?`, `model?` | `session_id`, `model`, `status`, `response?`, `error?` |
-| `agent_continue_task` | `session_id`, `message` | `session_id`, `model`, `status`, `response?`, `error?` |
+| `agent_start_task` | `task`, `context?`, `model?` | `session_id`, `model`, `status`, `response?`, `error?`, `fallback_from?` |
+| `agent_continue_task` | `session_id`, `message` | `session_id`, `model`, `status`, `response?`, `error?`, `fallback_from?` |
 | `agent_set_session_model` | `session_id`, `model` | `session_id`, `model` |
 | `agent_get_session` | `session_id` | 状態、日時、ターン数、履歴の短いプレビュー |
 | `agent_cancel_task` | `session_id` | `session_id`, `status: "cancelled"` |
@@ -22,12 +22,15 @@
 
 1. Cursor が issue、対象ファイル、既存テスト、制約を調べます。
 2. 必要なら `agent_list_models` で候補 ID と既定モデルを見ます。共有の既定値を変える場合は `agent_set_default_model` を呼びます。
-3. 関連するコードと要件を `context` にまとめ、`agent_start_task` で実装案を求めます。
-4. 返った提案・diff の適用先と前提を Cursor が確認し、自分のチェックアウトを編集します。
-5. Cursor が diff、lint、テストを確認します。失敗内容や追加条件を `agent_continue_task` に送り、同じ会話を続けます。
-6. 最終的な git / PR 操作は Cursor が行います。
+3. 最初のモデル呼び出し前に、ユーザーへ **「Model Agent MCPをmodel ○○で使います。」** と表示します。`○○` は指定モデル、または `agent_list_models` の `default_model` に置き換えます。
+4. 関連するコードと要件を `context` にまとめ、`agent_start_task` で実装案を求めます。
+5. 返った提案・diff の適用先と前提を Cursor が確認し、自分のチェックアウトを編集します。
+6. Cursor が diff、lint、テストを確認します。失敗内容や追加条件を `agent_continue_task` に送り、同じ会話を続けます。
+7. 最終的な git / PR 操作は Cursor が行います。
 
 接続先 repo に入れる Cursor 用ルール例は [`examples/AGENTS.md`](../examples/AGENTS.md) です。ほかのクライアントでは同じ考え方を、そのクライアントの repo 操作手順に置き換えられます。
+
+MCP の初期化応答にもこの表示指示を `instructions` として入れ、モデル呼び出しツールの説明にも記載しています。表示そのものは呼び出し元エージェントの動作です。クライアントが instructions やルールを無視する場合、MCP サーバーだけで画面表示を強制することはできません。
 
 ### 最初の依頼
 
@@ -59,6 +62,17 @@
 ```
 
 別モデルに同じ会話の続きから相談する場合は `agent_set_session_model` を呼び、続けて `agent_continue_task` を呼びます。変更前の会話テキストは維持されます。モデル別の隠れた状態やツールの実行結果は引き継がれません。独立した比較をしたいときは、新しい `agent_start_task` をそれぞれのモデルで始めてください。
+
+## CLIProxyAPI の `auto` へのフォールバック
+
+CLIProxyAPI の Chat Completions API では、モデルを省略した場合に使う共通の既定モデルは確認できませんでした。現行コードの `auto` は [利用可能なモデルを選ぶ selector](https://github.com/router-for-me/CLIProxyAPI/blob/main/internal/util/provider.go) です。そのため指定モデルからのフォールバック時は、モデルを省略せず `"model": "auto"` を送ります。
+
+- 最初のモデル呼び出しが `model_not_found`、`auth_not_found`、`auth_unavailable`、HTTP 429、または HTTP 503 で失敗したときだけ `auto` を一度試します。MCP Bearer 認証失敗、CLIProxyAPI API key の 401/403、タイムアウト、汎用の HTTP 400/500、キャンセルでは試しません。
+- 成功した場合、返却値は `model: "auto"` と `fallback_from: "元のモデルID"` を含み、セッションの後続ターンも `auto` を使います。エージェントはユーザーへフォールバックを伝えます。`auto` が実際に選んだモデル ID は、この PoC の返却値からは確定できません。
+- `auto` も失敗した場合、`status: "error"` と `fallback_from` を返します。失敗したメッセージは履歴に追加されず、セッションのモデルは元のままです。無限再試行はしません。
+- 最初から `model: "auto"` を指定した場合に二重の `auto` 呼び出しはしません。CLIProxyAPI が選ぶモデルは後続ターンで変わる可能性があります。
+
+CLIProxyAPI の `auto` は特定の Claude / GPT モデルを保証するものではありません。用途や送信先を厳密に限定したい場合は、利用可能なモデル ID を明示し、フォールバック動作を運用上確認してください。
 
 ## セッション状態とエラー
 

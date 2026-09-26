@@ -38,6 +38,8 @@ flowchart LR
 4. テキスト応答を履歴に追加し、`session_id` と応答をクライアントへ返します。
 5. 後続の `agent_continue_task` は保存済みの会話を再送します。`agent_set_session_model` は次の呼び出しからモデル ID を変えます。
 
+指定モデルが利用不可と判定された場合は、CLIProxyAPI の `auto` selector で一度だけ再試行します。成功するとセッションのモデルは `auto` となり、結果に元の ID を `fallback_from` として含めます。[条件と返却値](tool-workflow.md#cliproxyapi-の-auto-へのフォールバック) を参照してください。
+
 [`src/proxy-client.ts`](../src/proxy-client.ts) は Claude 専用の `/v1/messages` ではなく、Claude と Codex/GPT を同じクライアント層で扱うために OpenAI 互換の chat endpoint を使います。モデルが `/v1/models` に表示されても、そのモデルへの chat completion が成功するとは限りません。資格情報、クォータ、ルーティングとモデルの対応を実際の呼び出しで確かめてください。[CLIProxyAPI README](https://github.com/router-for-me/CLIProxyAPI)。
 
 ## 二種類の「セッション」

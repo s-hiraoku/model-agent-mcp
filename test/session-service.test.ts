@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { ChatMessage, ModelClient } from "../src/proxy-client.js";
+import { ProxyError, type ChatMessage, type ModelClient } from "../src/proxy-client.js";
 import { SessionService, SessionError } from "../src/session-service.js";
 import { MemorySessionStore } from "../src/session-store.js";
 
@@ -55,6 +55,73 @@ test("updates the default only for new sessions without changing existing sessio
   assert.equal(explicit.model, "claude-test");
   assert.equal((await service.continue(existing.session_id, "follow up")).model, "claude-test");
   assert.deepEqual(usedModels, ["claude-test", "gpt-test", "claude-test", "claude-test"]);
+});
+
+test("falls back once to CLIProxyAPI auto and keeps the successful session on auto", async () => {
+  const usedModels: string[] = [];
+  const service = new SessionService(new MemorySessionStore(), {
+    listModels: async () => [],
+    complete: async (model) => {
+      usedModels.push(model);
+      if (model === "missing") throw new ProxyError("CLIProxyAPI returned HTTP 400", 400, "model_not_found");
+      return "fallback response";
+    },
+  }, "missing");
+  const first = await service.start("first");
+  assert.deepEqual(first, {
+    session_id: first.session_id,
+    model: "auto",
+    status: "ready",
+    response: "fallback response",
+    fallback_from: "missing",
+  });
+  assert.equal((await service.get(first.session_id) as { turn_count: number }).turn_count, 1);
+  const next = await service.continue(first.session_id, "second");
+  assert.equal(next.model, "auto");
+  assert.deepEqual(usedModels, ["missing", "auto", "auto"]);
+});
+
+test("does not fall back on authentication errors or retry auto repeatedly", async () => {
+  const usedModels: string[] = [];
+  const client: ModelClient = {
+    listModels: async () => [],
+    complete: async (model) => {
+      usedModels.push(model);
+      throw new ProxyError("CLIProxyAPI returned HTTP 401", 401);
+    },
+  };
+  const service = new SessionService(new MemorySessionStore(), client, "missing");
+  const result = await service.start("first");
+  assert.equal(result.status, "error");
+  assert.deepEqual(usedModels, ["missing"]);
+
+  const auto = new SessionService(new MemorySessionStore(), {
+    listModels: async () => [],
+    complete: async (model) => {
+      usedModels.push(model);
+      throw new ProxyError("CLIProxyAPI returned HTTP 503", 503);
+    },
+  }, "auto");
+  assert.equal((await auto.start("first")).status, "error");
+  assert.deepEqual(usedModels, ["missing", "auto"]);
+});
+
+test("reports a failed fallback and leaves conversation history unchanged", async () => {
+  const usedModels: string[] = [];
+  const service = new SessionService(new MemorySessionStore(), {
+    listModels: async () => [],
+    complete: async (model) => {
+      usedModels.push(model);
+      throw new ProxyError(`CLIProxyAPI returned HTTP ${model === "auto" ? 503 : 400}`,
+        model === "auto" ? 503 : 400, model === "auto" ? undefined : "model_not_found");
+    },
+  }, "missing");
+  const result = await service.start("first");
+  assert.equal(result.status, "error");
+  assert.equal(result.model, "missing");
+  assert.equal(result.fallback_from, "missing");
+  assert.equal((await service.get(result.session_id) as { turn_count: number }).turn_count, 0);
+  assert.deepEqual(usedModels, ["missing", "auto"]);
 });
 
 test("cancel aborts an in-flight continuation and closes the session", async () => {

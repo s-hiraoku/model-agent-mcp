@@ -5,6 +5,7 @@ import type { SessionService } from "./session-service.js";
 const text = z.string().trim().min(1).max(200_000);
 const id = z.string().uuid();
 const model = z.string().trim().min(1).max(200);
+const clientInstructions = "Before the first model invocation for a user task, display this exact user-visible sentence with the selected model ID: 『Model Agent MCPをmodel ○○で使います。』 Replace ○○ with the model ID. If the task call omits model, use agent_list_models to learn default_model, then display the sentence before agent_start_task. For an existing session, use agent_get_session to learn its model before the first agent_continue_task. Never silently invoke a model. If a result includes fallback_from, tell the user the request fell back to CLIProxyAPI model auto; do not claim to know the concrete model chosen by auto.";
 
 function result(value: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(value) }] };
@@ -22,7 +23,7 @@ async function call(action: () => Promise<unknown>) {
 }
 
 export function createMcpServer(sessions: SessionService): McpServer {
-  const server = new McpServer({ name: "model-agent-mcp", version: "0.1.0" });
+  const server = new McpServer({ name: "model-agent-mcp", version: "0.1.0" }, { instructions: clientInstructions });
 
   server.registerTool("agent_list_models", {
     description: "List model IDs currently advertised by CLIProxyAPI. A listed model may still fail if its credential or route is unavailable.",
@@ -35,12 +36,12 @@ export function createMcpServer(sessions: SessionService): McpServer {
   }, ({ model }) => call(() => sessions.setDefaultModel(model)));
 
   server.registerTool("agent_start_task", {
-    description: "Ask the selected model for implementation guidance or a patch. The calling MCP client supplies repository context and applies and verifies any proposed changes.",
+    description: "Before calling, visibly announce 'Model Agent MCPをmodel ○○で使います。' with the selected model ID. Ask the model for implementation guidance or a patch. The calling MCP client supplies repository context and applies and verifies proposed changes.",
     inputSchema: z.object({ task: text, context: text.optional(), model: model.optional() }),
   }, ({ task, context, model }) => call(() => sessions.start(task, context, model)));
 
   server.registerTool("agent_continue_task", {
-    description: "Continue a model consultation using its server-side conversation history.",
+    description: "Continue a model consultation using its server-side conversation history. If this is the first model invocation for the user task, announce the session model visibly before calling.",
     inputSchema: z.object({ session_id: id, message: text }),
   }, ({ session_id, message }) => call(() => sessions.continue(session_id, message)));
 

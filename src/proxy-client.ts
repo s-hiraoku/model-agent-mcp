@@ -18,9 +18,15 @@ export interface ModelClient {
 }
 
 export class ProxyError extends Error {
-  constructor(message: string, public readonly status?: number) {
+  constructor(message: string, public readonly status?: number, public readonly code?: string) {
     super(message);
     this.name = "ProxyError";
+  }
+
+  get modelUnavailable(): boolean {
+    if (this.status === 401 || this.status === 403) return false;
+    return this.code === "model_not_found" || this.code === "auth_not_found" || this.code === "auth_unavailable"
+      || this.status === 429 || this.status === 503;
   }
 }
 
@@ -66,7 +72,17 @@ export class CLIProxyClient implements ModelClient {
       if (error instanceof Error && error.name === "AbortError") throw error;
       throw new ProxyError("CLIProxyAPI request failed or timed out");
     }
-    if (!response.ok) throw new ProxyError(`CLIProxyAPI returned HTTP ${response.status}`, response.status);
+    if (!response.ok) {
+      let code: string | undefined;
+      try {
+        const body = await response.json();
+        const parsed = z.object({ error: z.object({ code: z.string() }) }).safeParse(body);
+        if (parsed.success) code = parsed.data.error.code;
+      } catch {
+        // Keep the HTTP status when the upstream error body is not JSON.
+      }
+      throw new ProxyError(`CLIProxyAPI returned HTTP ${response.status}`, response.status, code);
+    }
     try {
       return await response.json();
     } catch {

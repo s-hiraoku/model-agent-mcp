@@ -29,6 +29,7 @@ test("MCP rejects unauthenticated calls and exposes model tools", async () => {
       requestInit: { headers: { Authorization: "Bearer test-token" } },
     });
     await client.connect(transport);
+    assert.match(client.getInstructions() ?? "", /Model Agent MCPをmodel ○○で使います。/);
     const tools = await client.listTools();
     assert(tools.tools.some((tool) => tool.name === "agent_set_session_model"));
     assert(tools.tools.some((tool) => tool.name === "agent_set_default_model"));

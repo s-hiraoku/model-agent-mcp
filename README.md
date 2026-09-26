@@ -48,6 +48,8 @@ Docker Compose では MCP と CLIProxyAPI を別サービスとして起動し�
 
 セッションは現在メモリ保存で、再起動すると消えます。既定モデルは `.env` の `DEFAULT_MODEL` で起動時に設定し、`agent_set_default_model` で稼働中に変更できます。稼働中の変更は全クライアントに共通で、再起動すると `.env` の値に戻ります。モデルに渡すのは呼び出し元が提供した文脈と会話履歴です。詳しい入出力は [ツールと実装ワークフロー](docs/tool-workflow.md) にあります。
 
+指定モデルが利用できないと CLIProxyAPI が明示した場合、`model: "auto"` で一度だけ再試行します。成功時の結果には `fallback_from` が付き、セッションのモデルは `auto` になります。利用エージェントには、最初のモデル呼び出し前に **「Model Agent MCPをmodel ○○で使います。」** と表示するよう MCP の instructions と [Cursor 用ルール例](examples/AGENTS.md) で指示しています。
+
 ## 開発時の確認
 
 ```bash

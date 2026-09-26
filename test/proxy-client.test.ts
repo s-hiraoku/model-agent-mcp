@@ -29,5 +29,13 @@ test("returns a safe HTTP error without upstream body or credentials", async () 
   const client = new CLIProxyClient("http://proxy:8317", "secret", 100, 1000, async () =>
     new Response("secret sensitive body", { status: 401 }));
   await assert.rejects(client.listModels(), (error: unknown) =>
-    error instanceof ProxyError && error.status === 401 && !error.message.includes("secret"));
+    error instanceof ProxyError && error.status === 401 && !error.modelUnavailable && !error.message.includes("secret"));
+});
+
+test("classifies an unavailable model without exposing the upstream error body", async () => {
+  const client = new CLIProxyClient("http://proxy:8317", "secret", 100, 1000, async () =>
+    Response.json({ error: { code: "model_not_found", message: "private upstream detail" } }, { status: 400 }));
+  await assert.rejects(client.complete("missing", [{ role: "user", content: "task" }], new AbortController().signal),
+    (error: unknown) => error instanceof ProxyError && error.modelUnavailable && error.code === "model_not_found"
+      && !error.message.includes("private upstream detail"));
 });
