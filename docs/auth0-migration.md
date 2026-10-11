@@ -30,3 +30,8 @@ The process admits at most 120 MCP HTTP requests/minute, 4 active HTTP exchanges
 Production startup requires a private audit directory (`MODEL_AUDIT_DIRECTORY`, default `runtime/audit`). Logs contain only fixed category, UTC time and server-issued random request ID: never subject/client IDs, tokens, argument/result text, raw URL, raw session ID, IP, or exception stack. Three files at most, 256 KiB each; archived files older than 24 hours are removed on activity. Twenty rejection/error events within a minute append a local `anomaly` event; no external notification is sent. Counters saturate and reset by minute. Disk/permission/symlink failures deny admission or the tool action. If an after-action audit fails, the already performed operation cannot be undone; the result is reported as rejected, and callers must not blindly retry model calls.
 
 Run the source checks before deployment. Deployment approval must separately cover endpoint/scope/data, existing route replacement, process restart, paid-model allowance ($0 means no paid invocation), and real proxy behavior. OS-level isolation of the existing model service has not been verified. This code is not an OS sandbox and grants no shell/filesystem tools to a model.
+
+
+## Review corrections
+
+See [finding-to-test mapping](review-fixes.md) for the asynchronous acknowledged audit queue, bounded rejection summaries, terminal cancel semantics, unknown deadline classification and explicit refusal of long-lived SDK subscriptions. The Node entry buffers a bounded response and applies finite exchange/body/socket waits. `tools.listChanged` is false. The synchronous filesystem logger is confined to its isolated worker; pre-admission rejection does not write to disk.

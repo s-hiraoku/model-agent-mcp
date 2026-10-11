@@ -258,7 +258,7 @@ test("hung provider reaches deadline and retains uncertain concurrency slot", as
 		{ timeoutMs: 5 },
 	);
 	const outcome = await service.start(principal, "hello");
-	assert.equal(outcome.status, "cancelled");
+	assert.equal(outcome.status, "unknown");
 	await assert.rejects(service.start(principal, "second"), /limit/);
 	const listing = new SessionService(
 		new MemorySessionStore(),
@@ -359,4 +359,122 @@ test("startup configuration failure hides private paths and exception stacks", a
 	assert.equal(result.status, 1);
 	assert.equal(result.stdout, "");
 	assert.equal(result.stderr, "startup_rejected\n");
+});
+test("rejected busy/rate starts never reserve hidden sessions", async () => {
+	let finish!: (value: string) => void;
+	const store = new MemorySessionStore(2);
+	let calls = 0;
+	const service = new SessionService(
+		store,
+		{
+			listModels: async () => [],
+			complete: async () => {
+				calls++;
+				if (calls === 1)
+					return new Promise((resolve) => {
+						finish = resolve;
+					});
+				return "ok";
+			},
+		},
+		"test",
+	);
+	const running = service.start(principal, "first");
+	await new Promise((r) => setImmediate(r));
+	for (let i = 0; i < 40; i++)
+		await assert.rejects(service.start(principal, "rejected"), /limit/);
+	assert.equal(store.count(), 1);
+	finish("ok");
+	await running;
+	await service.start(principal, "accepted");
+	assert.equal(store.count(), 2);
+	const rateStore = new MemorySessionStore();
+	const rate = new SessionService(
+		rateStore,
+		{ listModels: async () => [], complete: async () => "ok" },
+		"test",
+		{ maxCalls: 1 },
+	);
+	await rate.start(principal, "first");
+	for (let i = 0; i < 40; i++)
+		await assert.rejects(rate.start(principal, "rejected"), /limit/);
+	assert.equal(rateStore.count(), 1);
+});
+test("idle cancel wins concurrent continuation and model changes without revival", async () => {
+	for (const operation of ["continue", "setModel"]) {
+		let calls = 0;
+		const service = new SessionService(
+			new MemorySessionStore(),
+			{
+				listModels: async () => [],
+				complete: async () => {
+					calls++;
+					return "ok";
+				},
+			},
+			"test",
+		);
+		const first = await service.start(principal, "first");
+		const results = await Promise.allSettled([
+			service.cancel(principal, first.session_id),
+			operation === "continue"
+				? service.continue(principal, first.session_id, "after cancel")
+				: service.setModel(principal, first.session_id, "other"),
+		]);
+		assert.equal(results[0]?.status, "fulfilled");
+		assert.equal(results[1]?.status, "rejected");
+		assert.equal(
+			((await service.get(principal, first.session_id)) as { status: string })
+				.status,
+			"cancelled",
+		);
+		assert.equal(calls, 1);
+	}
+});
+test("deadline is unknown/isError/tool_error while explicit cancel succeeds", async () => {
+	const audit = new MemoryAudit();
+	const service = new SessionService(
+		new MemorySessionStore(),
+		{ listModels: async () => [], complete: () => new Promise(() => {}) },
+		"test",
+		{ timeoutMs: 5 },
+	);
+	const handler = createMcpHandler(() =>
+		createMcpServer(
+			service,
+			principal,
+			audit,
+			"11111111-1111-4111-8111-111111111111",
+		),
+	);
+	const response = await handler.fetch(
+		new Request("https://model.example/mcp", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Accept: "application/json, text/event-stream",
+			},
+			body: JSON.stringify({
+				jsonrpc: "2.0",
+				id: 1,
+				method: "tools/call",
+				params: { name: "agent_start_task", arguments: { task: "hello" } },
+			}),
+		}),
+	);
+	const body = await response.text();
+	assert.match(body, /unknown/);
+	assert.match(body, /isError/);
+	assert.equal(audit.counts.get("tool_error"), 1);
+	assert.equal(audit.counts.get("tool_succeeded"), undefined);
+	const other = new SessionService(
+		new MemorySessionStore(),
+		{ listModels: async () => [], complete: async () => "ok" },
+		"test",
+	);
+	const session = await other.start(principal, "first");
+	assert.equal(
+		(await other.cancel(principal, session.session_id)).status,
+		"cancelled",
+	);
 });

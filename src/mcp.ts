@@ -1,12 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/server";
-import { z } from "zod";
+import { toolSchemas } from "./protocol.js";
 import type { Principal } from "./principal.js";
 import type { Audit } from "./audit.js";
 import type { SessionService } from "./session-service.js";
 
-const text = z.string().trim().min(1).max(8192);
-const id = z.string().uuid();
-const model = z.string().trim().min(1).max(200);
 const clientInstructions =
 	"Before the first model invocation for a user task, display this exact user-visible sentence with the selected model ID: 『Model Agent MCPをmodel ○○で使います。』 Replace ○○ with the model ID. If the task call omits model, use agent_list_models to learn default_model, then display the sentence before agent_start_task. For an existing session, use agent_get_session to learn its model before the first agent_continue_task. Never silently invoke a model. If a result includes fallback_from, tell the user the request fell back to CLIProxyAPI model auto; do not claim to know the concrete model chosen by auto.";
 
@@ -20,7 +17,7 @@ async function call(
 	correlation: string,
 ) {
 	try {
-		audit.record("tool_started", correlation);
+		await audit.record("tool_started", correlation);
 		const value = await action();
 		if (Buffer.byteLength(JSON.stringify(value)) > 32768)
 			throw new Error("Response rejected");
@@ -28,12 +25,12 @@ async function call(
 			typeof value === "object" &&
 			value !== null &&
 			"status" in value &&
-			value.status === "error";
-		audit.record(failed ? "tool_error" : "tool_succeeded", correlation);
+			(value.status === "error" || value.status === "unknown");
+		await audit.record(failed ? "tool_error" : "tool_succeeded", correlation);
 		return { ...result(value), ...(failed ? { isError: true } : {}) };
 	} catch {
 		try {
-			audit.record("tool_error", correlation);
+			await audit.record("tool_error", correlation);
 		} catch {
 			/* Fail closed; never expose the disk error. */
 		}
@@ -55,13 +52,15 @@ export function createMcpServer(
 		{ instructions: clientInstructions },
 	);
 
+	server.server.registerCapabilities({ tools: { listChanged: false } });
+
 	server.registerTool(
 		"agent_list_models",
 		{
 			_meta: { securitySchemes: [{ type: "oauth2", scopes: ["model:list"] }] },
 			description:
 				"List model IDs currently advertised by CLIProxyAPI. A listed model may still fail if its credential or route is unavailable.",
-			inputSchema: z.strictObject({}),
+			inputSchema: toolSchemas.agent_list_models,
 		},
 		() => call(() => sessions.listModels(principal), audit, correlation),
 	);
@@ -72,7 +71,7 @@ export function createMcpServer(
 			_meta: { securitySchemes: [{ type: "oauth2", scopes: ["model:admin"] }] },
 			description:
 				"Set the shared default model for new tasks when model is omitted. Existing sessions keep their model. This setting resets to DEFAULT_MODEL on server restart.",
-			inputSchema: z.strictObject({ model }),
+			inputSchema: toolSchemas.agent_set_default_model,
 		},
 		({ model }) =>
 			call(
@@ -88,11 +87,7 @@ export function createMcpServer(
 			_meta: { securitySchemes: [{ type: "oauth2", scopes: ["model:start"] }] },
 			description:
 				"Before calling, visibly announce 'Model Agent MCPをmodel ○○で使います。' with the selected model ID. Ask the model for implementation guidance or a patch. The calling MCP client supplies repository context and applies and verifies proposed changes.",
-			inputSchema: z.strictObject({
-				task: text,
-				context: text.optional(),
-				model: model.optional(),
-			}),
+			inputSchema: toolSchemas.agent_start_task,
 		},
 		({ task, context, model }) =>
 			call(
@@ -110,7 +105,7 @@ export function createMcpServer(
 			},
 			description:
 				"Continue a model consultation using its server-side conversation history. If this is the first model invocation for the user task, announce the session model visibly before calling.",
-			inputSchema: z.strictObject({ session_id: id, message: text }),
+			inputSchema: toolSchemas.agent_continue_task,
 		},
 		({ session_id, message }) =>
 			call(
@@ -126,7 +121,7 @@ export function createMcpServer(
 			_meta: { securitySchemes: [{ type: "oauth2", scopes: ["model:set"] }] },
 			description:
 				"Select a different CLIProxyAPI model for future messages in this session. Prior conversation is retained.",
-			inputSchema: z.strictObject({ session_id: id, model }),
+			inputSchema: toolSchemas.agent_set_session_model,
 		},
 		({ session_id, model }) =>
 			call(
@@ -142,7 +137,7 @@ export function createMcpServer(
 			_meta: { securitySchemes: [{ type: "oauth2", scopes: ["model:get"] }] },
 			description:
 				"Get a session's model, status, timestamps, and short previews of prior turns.",
-			inputSchema: z.strictObject({ session_id: id }),
+			inputSchema: toolSchemas.agent_get_session,
 		},
 		({ session_id }) =>
 			call(() => sessions.get(principal, session_id), audit, correlation),
@@ -156,7 +151,7 @@ export function createMcpServer(
 			},
 			description:
 				"Cancel an in-flight request and close the session to future messages.",
-			inputSchema: z.strictObject({ session_id: id }),
+			inputSchema: toolSchemas.agent_cancel_task,
 		},
 		({ session_id }) =>
 			call(() => sessions.cancel(principal, session_id), audit, correlation),

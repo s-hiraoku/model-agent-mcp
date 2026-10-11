@@ -24,6 +24,7 @@ type TaskResult = {
 export class SessionService {
 	private readonly active = new Map<string, AbortController>();
 	private readonly pending = new Set<string>();
+	private readonly locks = new Map<string, Promise<void>>();
 	private readonly admissions = new Map<
 		string,
 		{ window: number; calls: number }
@@ -95,8 +96,16 @@ export class SessionService {
 			createdAt: now,
 			updatedAt: now,
 		};
-		await this.store.put(session);
-		return this.run(session, task);
+		this.admit(session.owner);
+		const controller = new AbortController();
+		this.active.set(session.id, controller);
+		try {
+			await this.store.put(session);
+		} catch (error) {
+			this.active.delete(session.id);
+			throw error;
+		}
+		return this.run(session, task, controller);
 	}
 
 	async continue(
@@ -105,10 +114,13 @@ export class SessionService {
 		message: string,
 	): Promise<TaskResult> {
 		requireScope(principal, "model:continue");
-		const session = await this.requireSession(principal, id);
-		if (session.status === "cancelled")
-			throw new SessionError("Session is cancelled");
-		return this.run(session, message);
+		const started = await this.withLock(id, async () => {
+			const session = await this.requireSession(principal, id);
+			if (session.status === "cancelled")
+				throw new SessionError("Session is cancelled");
+			return { work: this.run(session, message) };
+		});
+		return started.work;
 	}
 
 	async setModel(
@@ -117,15 +129,17 @@ export class SessionService {
 		model: string,
 	): Promise<{ session_id: string; model: string }> {
 		requireScope(principal, "model:set");
-		const session = await this.requireSession(principal, id);
-		if (session.status === "cancelled")
-			throw new SessionError("Session is cancelled");
-		if (this.active.has(id)) throw new SessionError("Session is busy");
-		this.checkText(model);
-		session.model = model;
-		session.updatedAt = new Date().toISOString();
-		await this.store.put(session);
-		return { session_id: id, model };
+		return this.withLock(id, async () => {
+			const session = await this.requireSession(principal, id);
+			if (session.status === "cancelled")
+				throw new SessionError("Session is cancelled");
+			if (this.active.has(id)) throw new SessionError("Session is busy");
+			this.checkText(model);
+			session.model = model;
+			session.updatedAt = new Date().toISOString();
+			await this.store.put(session);
+			return { session_id: id, model };
+		});
 	}
 
 	async get(principal: Principal, id: string): Promise<object> {
@@ -135,6 +149,7 @@ export class SessionService {
 			session_id: session.id,
 			model: session.model,
 			status: session.status,
+			execution_state: this.pending.has(id) ? "unknown" : "settled",
 			created_at: session.createdAt,
 			updated_at: session.updatedAt,
 			turn_count: session.messages.filter((message) => message.role === "user")
@@ -151,12 +166,32 @@ export class SessionService {
 		id: string,
 	): Promise<{ session_id: string; status: string }> {
 		requireScope(principal, "model:cancel");
-		const session = await this.requireSession(principal, id);
-		this.active.get(id)?.abort();
-		session.status = "cancelled";
-		session.updatedAt = new Date().toISOString();
-		await this.store.put(session);
-		return { session_id: id, status: "cancelled" };
+		return this.withLock(id, async () => {
+			const session = await this.requireSession(principal, id);
+			this.active.get(id)?.abort("user_cancel");
+			session.status = "cancelled";
+			session.updatedAt = new Date().toISOString();
+			await this.store.put(session);
+			return { session_id: id, status: "cancelled" };
+		});
+	}
+
+	private async withLock<T>(id: string, work: () => Promise<T>): Promise<T> {
+		if (!this.locks.has(id) && this.locks.size >= 128)
+			throw new SessionError("Call limit reached");
+		const previous = this.locks.get(id) ?? Promise.resolve();
+		let release!: () => void;
+		const turn = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		this.locks.set(id, turn);
+		await previous;
+		try {
+			return await work();
+		} finally {
+			release();
+			if (this.locks.get(id) === turn) this.locks.delete(id);
+		}
 	}
 
 	private async bounded<T>(
@@ -179,7 +214,7 @@ export class SessionService {
 		let timer: NodeJS.Timeout | undefined;
 		const deadline = new Promise<never>((_resolve, reject) => {
 			timer = setTimeout(() => {
-				controller.abort();
+				controller.abort("deadline");
 				reject(new SessionError("Deadline reached"));
 			}, this.options.timeoutMs ?? 30000);
 		});
@@ -236,7 +271,11 @@ export class SessionService {
 		return session;
 	}
 
-	private async run(session: Session, input: string): Promise<TaskResult> {
+	private async run(
+		session: Session,
+		input: string,
+		prepared?: AbortController,
+	): Promise<TaskResult> {
 		this.checkText(input);
 		if (
 			session.messages.length >= (this.options.maxTurns ?? 16) * 2 ||
@@ -246,16 +285,25 @@ export class SessionService {
 				65536
 		)
 			throw new SessionError("History limit reached");
-		if (this.active.has(session.id)) throw new SessionError("Session is busy");
-		this.admit(session.owner);
-		const controller = new AbortController();
+		if (!prepared) {
+			if (this.active.has(session.id))
+				throw new SessionError("Session is busy");
+			this.admit(session.owner);
+		}
+		const controller = prepared ?? new AbortController();
 		this.active.set(session.id, controller);
 
 		session.status = "running";
 		session.updatedAt = new Date().toISOString();
 		let fallbackFrom: string | undefined;
+		let outcome: TaskResult = {
+			session_id: session.id,
+			model: session.model,
+			status: "error",
+		};
 		try {
 			await this.store.put(session);
+			if (controller.signal.aborted) throw new SessionError("Cancelled");
 			const messages: ChatMessage[] = [
 				{
 					role: "system",
@@ -287,14 +335,7 @@ export class SessionService {
 				);
 				if (!controller.signal.aborted) session.model = "auto";
 			}
-			if (controller.signal.aborted) {
-				session.status = "cancelled";
-				return {
-					session_id: session.id,
-					model: session.model,
-					status: "cancelled",
-				};
-			}
+			if (controller.signal.aborted) throw new SessionError("Cancelled");
 			if (
 				Buffer.byteLength(response) > 16384 ||
 				Buffer.byteLength(JSON.stringify(session.messages)) +
@@ -309,7 +350,7 @@ export class SessionService {
 				{ role: "assistant", content: response },
 			);
 			session.status = "ready";
-			return {
+			outcome = {
 				session_id: session.id,
 				model: session.model,
 				status: "ready",
@@ -319,24 +360,40 @@ export class SessionService {
 		} catch {
 			if (controller.signal.aborted) {
 				session.status = "cancelled";
-				return {
+				const unknown = controller.signal.reason === "deadline";
+				outcome = {
 					session_id: session.id,
 					model: session.model,
-					status: "cancelled",
+					status: unknown ? "unknown" : "cancelled",
+					...(unknown ? { error: "Provider completion is unconfirmed" } : {}),
+				};
+			} else {
+				session.status = "error";
+				outcome = {
+					session_id: session.id,
+					model: session.model,
+					status: "error",
+					error: "Upstream operation failed",
+					...(fallbackFrom && { fallback_from: fallbackFrom }),
 				};
 			}
-			session.status = "error";
-			return {
-				session_id: session.id,
-				model: session.model,
-				status: "error",
-				error: "Upstream operation failed",
-				...(fallbackFrom && { fallback_from: fallbackFrom }),
-			};
 		} finally {
-			session.updatedAt = new Date().toISOString();
-			if (!this.pending.has(session.id)) this.active.delete(session.id);
-			await this.store.put(session);
+			await this.withLock(session.id, async () => {
+				const latest = await this.store.get(session.id);
+				if (latest?.status === "cancelled") {
+					session = latest;
+					if (controller.signal.reason !== "deadline")
+						outcome = {
+							session_id: session.id,
+							model: session.model,
+							status: "cancelled",
+						};
+				}
+				session.updatedAt = new Date().toISOString();
+				await this.store.put(session);
+				if (!this.pending.has(session.id)) this.active.delete(session.id);
+			});
 		}
+		return outcome;
 	}
 }

@@ -1,10 +1,15 @@
 import { randomUUID } from "node:crypto";
 import express from "express";
-import { toNodeHandler } from "@modelcontextprotocol/node";
+import {
+	protocolAdmission,
+	boundedResponse,
+	exchangeResponse,
+} from "./protocol.js";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import type { Config } from "./config.js";
 import { createVerifier, loadAuthConfig, type Verify } from "./auth.js";
-import { LocalAudit, type Audit } from "./audit.js";
+import type { Audit } from "./audit.js";
+import { AsyncAudit } from "./async-audit.js";
 import { createMcpServer } from "./mcp.js";
 import type { SessionService } from "./session-service.js";
 
@@ -22,7 +27,7 @@ export function createApp(
 		dependencies.verify ?? (auth ? createVerifier(auth) : async () => null);
 	const audit =
 		dependencies.audit ??
-		new LocalAudit(config.auditDirectory ?? "runtime/audit");
+		new AsyncAudit(config.auditDirectory ?? "runtime/audit");
 	let window = 0,
 		calls = 0,
 		active = 0;
@@ -42,15 +47,21 @@ export function createApp(
 				],
 			});
 		});
+	app.locals.audit = audit;
 	app.get("/healthz", (_req, res) => {
-		res.json({ status: "ok" });
+		try {
+			audit.check?.();
+			res.json({ status: "ok" });
+		} catch {
+			res.status(503).json({ status: "unavailable" });
+		}
 	});
 	app.use("/mcp", async (req, res, next) => {
 		const correlation = randomUUID();
 		res.locals.correlation = correlation;
 		res.setHeader("X-Request-ID", correlation);
 		try {
-			audit.record("request", correlation);
+			audit.check?.();
 			const now = Date.now();
 			if (now - window > 60000) {
 				window = now;
@@ -58,7 +69,7 @@ export function createApp(
 			}
 			calls = Math.min(121, calls + 1);
 			if (calls > 120 || active >= 4) {
-				audit.record("rate_limited", correlation);
+				audit.note?.("rate_limited");
 				res.status(429).json({ error: "Request rejected" });
 				return;
 			}
@@ -72,6 +83,7 @@ export function createApp(
 			};
 			res.once("finish", release);
 			res.once("close", release);
+			await audit.record("request", correlation);
 			const allowedHost =
 				dependencies.allowedHost ??
 				(auth ? new URL(auth.resource).host : `${config.host}:${config.port}`);
@@ -89,13 +101,13 @@ export function createApp(
 				(req.headers["content-length"] &&
 					Number(req.headers["content-length"]) > 32768)
 			) {
-				audit.record("resource_rejected", correlation);
+				await audit.record("resource_rejected", correlation);
 				res.status(400).json({ error: "Request rejected" });
 				return;
 			}
 			const principal = await verify(req.headers.authorization);
 			if (!principal) {
-				audit.record("auth_denied", correlation);
+				await audit.record("auth_denied", correlation);
 				res.setHeader(
 					"WWW-Authenticate",
 					auth
@@ -103,6 +115,11 @@ export function createApp(
 						: "Bearer",
 				);
 				res.status(401).json({ error: "Unauthorized" });
+				return;
+			}
+			if (req.originalUrl !== "/mcp" || req.method !== "POST") {
+				await audit.record("resource_rejected", correlation);
+				res.status(405).json({ error: "Request rejected" });
 				return;
 			}
 			res.locals.principal = principal;
@@ -113,8 +130,22 @@ export function createApp(
 	});
 	app.use("/mcp", express.json({ limit: 32768 }));
 	app.all("/mcp", async (req, res) => {
+		let handler: ReturnType<typeof createMcpHandler> | undefined;
 		try {
-			const handler = createMcpHandler(() =>
+			if (
+				!(await protocolAdmission(
+					req.body,
+					typeof req.headers["mcp-method"] === "string"
+						? req.headers["mcp-method"]
+						: undefined,
+					audit,
+					res.locals.correlation,
+				))
+			) {
+				res.status(405).json({ error: "Request rejected" });
+				return;
+			}
+			handler = createMcpHandler(() =>
 				createMcpServer(
 					sessions,
 					res.locals.principal,
@@ -122,26 +153,52 @@ export function createApp(
 					res.locals.correlation,
 				),
 			);
-			await toNodeHandler(handler)(req, res, req.body);
+			const headers = new Headers();
+			for (const key of [
+				"accept",
+				"content-type",
+				"mcp-method",
+				"mcp-name",
+				"mcp-protocol-version",
+			]) {
+				const value = req.headers[key];
+				if (typeof value === "string") headers.set(key, value);
+			}
+			const response = await exchangeResponse(
+				handler.fetch(
+					new Request("http://mcp.internal/mcp", {
+						method: "POST",
+						headers,
+						body: JSON.stringify(req.body),
+					}),
+				),
+			);
+			const body = await boundedResponse(response);
+			res.status(response.status);
+			for (const [name, value] of response.headers) res.setHeader(name, value);
+			res.setTimeout(5000, () => res.destroy());
+			res.end(Buffer.from(body));
 		} catch {
 			try {
-				audit.record("transport_error", res.locals.correlation);
+				await audit.record("transport_error", res.locals.correlation);
 			} catch {
 				/* No unsafe fallback logging. */
 			}
 			if (!res.headersSent)
 				res.status(500).json({ error: "MCP transport error" });
+		} finally {
+			void handler?.close().catch(() => {});
 		}
 	});
 	app.use(
-		(
+		async (
 			_error: unknown,
 			_req: express.Request,
 			res: express.Response,
 			_next: express.NextFunction,
 		) => {
 			try {
-				audit.record("resource_rejected", res.locals.correlation);
+				await audit.record("transport_error", res.locals.correlation);
 			} catch {
 				/* Admission remains closed. */
 			}

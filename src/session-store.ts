@@ -35,6 +35,10 @@ export class MemorySessionStore implements SessionStore {
 		}
 	}
 
+	count() {
+		this.sweep();
+		return this.sessions.size;
+	}
 	async get(id: string): Promise<Session | undefined> {
 		this.sweep();
 		const session = this.sessions.get(id);
