@@ -341,3 +341,22 @@ test("private Auth0 configuration rejects unsafe permissions, symlinks, extra fi
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
+test("startup configuration failure hides private paths and exception stacks", async () => {
+	const { spawnSync } = await import("node:child_process");
+	const result = spawnSync(
+		process.execPath,
+		["--import", "tsx", "src/index.ts"],
+		{
+			encoding: "utf8",
+			env: {
+				MODEL_AUTH0_CONFIG: "/tmp/nonexistent-private-model-config-fixture",
+				CLIPROXY_BASE_URL: "http://proxy",
+				CLIPROXY_API_KEY: "DUMMY",
+				DEFAULT_MODEL: "test",
+			},
+		},
+	);
+	assert.equal(result.status, 1);
+	assert.equal(result.stdout, "");
+	assert.equal(result.stderr, "startup_rejected\n");
+});
