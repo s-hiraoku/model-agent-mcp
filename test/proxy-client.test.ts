@@ -3,39 +3,113 @@ import { test } from "node:test";
 import { CLIProxyClient, ProxyError } from "../src/proxy-client.js";
 
 test("uses CLIProxyAPI bearer auth and OpenAI-compatible routes", async () => {
-  const requests: { url: string; init: RequestInit }[] = [];
-  const fetcher: typeof fetch = async (input, init) => {
-    assert(init);
-    requests.push({ url: String(input), init });
-    if (String(input).endsWith("/v1/models")) {
-      return Response.json({ data: [{ id: "gpt-test" }, { id: "claude-test" }] });
-    }
-    return Response.json({ choices: [{ message: { content: "patch" } }] });
-  };
-  const client = new CLIProxyClient("http://proxy:8317", "secret", 100, 1000, fetcher);
-  assert.deepEqual(await client.listModels(), ["claude-test", "gpt-test"]);
-  assert.equal(await client.complete("gpt-test", [{ role: "user", content: "task" }], new AbortController().signal), "patch");
-  const [modelsRequest, completionRequest] = requests;
-  assert(modelsRequest);
-  assert(completionRequest);
-  assert.equal(modelsRequest.url, "http://proxy:8317/v1/models");
-  assert.equal(new Headers(completionRequest.init.headers).get("Authorization"), "Bearer secret");
-  assert.deepEqual(JSON.parse(String(completionRequest.init.body)), {
-    model: "gpt-test", messages: [{ role: "user", content: "task" }], max_tokens: 100, stream: false,
-  });
+	const requests: { url: string; init: RequestInit }[] = [];
+	const fetcher: typeof fetch = async (input, init) => {
+		assert(init);
+		requests.push({ url: String(input), init });
+		if (String(input).endsWith("/v1/models")) {
+			return Response.json({
+				data: [{ id: "gpt-test" }, { id: "claude-test" }],
+			});
+		}
+		return Response.json({ choices: [{ message: { content: "patch" } }] });
+	};
+	const client = new CLIProxyClient(
+		"http://proxy:8317",
+		"secret",
+		100,
+		1000,
+		fetcher,
+	);
+	assert.deepEqual(await client.listModels(), ["claude-test", "gpt-test"]);
+	assert.equal(
+		await client.complete(
+			"gpt-test",
+			[{ role: "user", content: "task" }],
+			new AbortController().signal,
+		),
+		"patch",
+	);
+	const [modelsRequest, completionRequest] = requests;
+	assert(modelsRequest);
+	assert(completionRequest);
+	assert.equal(modelsRequest.url, "http://proxy:8317/v1/models");
+	assert.equal(
+		new Headers(completionRequest.init.headers).get("Authorization"),
+		"Bearer secret",
+	);
+	assert.deepEqual(JSON.parse(String(completionRequest.init.body)), {
+		model: "gpt-test",
+		messages: [{ role: "user", content: "task" }],
+		max_tokens: 100,
+		stream: false,
+	});
 });
 
 test("returns a safe HTTP error without upstream body or credentials", async () => {
-  const client = new CLIProxyClient("http://proxy:8317", "secret", 100, 1000, async () =>
-    new Response("secret sensitive body", { status: 401 }));
-  await assert.rejects(client.listModels(), (error: unknown) =>
-    error instanceof ProxyError && error.status === 401 && !error.modelUnavailable && !error.message.includes("secret"));
+	const client = new CLIProxyClient(
+		"http://proxy:8317",
+		"secret",
+		100,
+		1000,
+		async () => new Response("secret sensitive body", { status: 401 }),
+	);
+	await assert.rejects(
+		client.listModels(),
+		(error: unknown) =>
+			error instanceof ProxyError &&
+			error.status === 401 &&
+			!error.modelUnavailable &&
+			!error.message.includes("secret"),
+	);
 });
 
 test("classifies an unavailable model without exposing the upstream error body", async () => {
-  const client = new CLIProxyClient("http://proxy:8317", "secret", 100, 1000, async () =>
-    Response.json({ error: { code: "model_not_found", message: "private upstream detail" } }, { status: 400 }));
-  await assert.rejects(client.complete("missing", [{ role: "user", content: "task" }], new AbortController().signal),
-    (error: unknown) => error instanceof ProxyError && error.modelUnavailable && error.code === "model_not_found"
-      && !error.message.includes("private upstream detail"));
+	const client = new CLIProxyClient(
+		"http://proxy:8317",
+		"secret",
+		100,
+		1000,
+		async () =>
+			Response.json(
+				{
+					error: {
+						code: "model_not_found",
+						message: "private upstream detail",
+					},
+				},
+				{ status: 400 },
+			),
+	);
+	await assert.rejects(
+		client.complete(
+			"missing",
+			[{ role: "user", content: "task" }],
+			new AbortController().signal,
+		),
+		(error: unknown) =>
+			error instanceof ProxyError &&
+			error.modelUnavailable &&
+			error.code === "model_not_found" &&
+			!error.message.includes("private upstream detail"),
+	);
+});
+test("bounded success/error bodies and redirect rejection retain separate upstream credentials", async () => {
+	for (const status of [200, 401]) {
+		const client = new CLIProxyClient(
+			"http://proxy:8317",
+			"upstream-only",
+			100,
+			1000,
+			async (_url, init) => {
+				assert.equal(init?.redirect, "error");
+				assert.equal(
+					new Headers(init?.headers).get("authorization"),
+					"Bearer upstream-only",
+				);
+				return new Response("x".repeat(65537), { status });
+			},
+		);
+		await assert.rejects(client.listModels(), ProxyError);
+	}
 });
