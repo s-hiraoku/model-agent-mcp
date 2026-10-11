@@ -173,6 +173,8 @@ export function createApp(
 					}),
 				),
 			);
+			if (response.status >= 400)
+				await audit.record("transport_error", res.locals.correlation);
 			const body = await boundedResponse(response);
 			res.status(response.status);
 			for (const [name, value] of response.headers) res.setHeader(name, value);

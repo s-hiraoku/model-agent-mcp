@@ -20,3 +20,7 @@ HTTP admission counters run before audit I/O. At most 120 requests per minute en
 Suppressed records use a fixed enum map and counters capped at 65,535. One summary at most per ten seconds contains only fixed category counts, dropped count, saturation flag and a fixed anomaly flag (20 or more suppressed events). Saturated counts are lower bounds. Unacknowledged summary counts remain bounded in process memory; they are not automatically replayed. Process failure/restart can lose the last unflushed counters. Rotation/retention still caps three private files of 256 KiB; filesystem inspection touches only the fixed log/archive names. Worker environment is empty: upstream and incoming authentication credentials are not copied into it. Acknowledgement means the operating-system write completed, not an fsync durability guarantee.
 
 Authentication, subject/client ownership, old-token rejection and separate upstream credentials remain unchanged. Production migration and OS isolation remain unverified.
+
+## SDK outcome follow-up
+
+The native HTTP wrapper records fixed `transport_error` for SDK responses with status 400 or greater. `protocol-http.test.ts` covers unsupported version, malformed envelope, unacceptable Accept and media-type preflight rejection. No version, header, envelope, payload or SDK error text is saved. Authentication denial and callback tool errors retain their separate classifications.

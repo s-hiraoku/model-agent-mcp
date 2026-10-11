@@ -215,3 +215,40 @@ test("response bytes and absolute wait deadline reject oversized or stalled stre
 		/rejected/,
 	);
 });
+test("SDK version/envelope/header failures and preflight media-type rejection are safely audited", async () => {
+	const audit = new MemoryAudit(),
+		{ server, url } = await fixture(audit);
+	const headers = {
+		"Content-Type": "application/json",
+		Accept: "application/json, text/event-stream",
+		Authorization: "Bearer DUMMY",
+	};
+	const body = { jsonrpc: "2.0", id: 1, method: "tools/list" };
+	try {
+		for (const value of [
+			{ headers: { ...headers, "Content-Type": "text/plain" }, body },
+			{
+				headers: {
+					...headers,
+					"MCP-Protocol-Version": "PRIVATE-invalid-version",
+				},
+				body,
+			},
+			{ headers, body: { ...body, jsonrpc: "PRIVATE-invalid-envelope" } },
+			{ headers: { ...headers, Accept: "text/plain" }, body },
+		]) {
+			const response = await fetch(url, {
+				method: "POST",
+				headers: value.headers,
+				body: JSON.stringify(value.body),
+			});
+			assert(response.status >= 400);
+			await response.text();
+		}
+		assert.equal(audit.counts.get("transport_error"), 4);
+		assert.equal(audit.counts.get("tool_started"), undefined);
+	} finally {
+		server.close();
+		await once(server, "close");
+	}
+});
