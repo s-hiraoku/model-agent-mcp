@@ -4,3 +4,9 @@ dist/
 cliproxy.config.yaml
 cliproxy-auth/
 *.log
+runtime/
+secrets/
+*.local.json
+*.db
+*.db-wal
+*.db-shm

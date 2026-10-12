@@ -1,3 +1,5 @@
+> Auth0移行後の現行sourceでは共有Bearerは使えません。このページの旧接続/Compose例は移行前の記録です。実行前に[Auth0移行手順](auth0-migration.md)に従って私有設定・audit volume・別audienceをレビューしてください。既存サービスへの適用には別承認が必要です。
+
 # セットアップ
 
 最初は CLIProxyAPI と MCP を同じホストで動かし、localhost で疎通確認します。その後、MCP の `/mcp` だけを HTTPS で公開し、Cursor Local / Cloud に同じ URL を登録します。CLIProxyAPI の認証とモデルが未設定なら、MCP 自体が起動してもモデル呼び出しは成功しません。

@@ -5,3 +5,10 @@ cliproxy.config.yaml
 cliproxy-auth
 .git
 test
+
+runtime
+secrets
+*.local.json
+*.db
+*.db-wal
+*.db-shm
